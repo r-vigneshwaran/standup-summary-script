@@ -22,6 +22,59 @@ def load_env():
         print("Error: .env file not found. Please create it with required variables.")
         sys.exit(1)
     return env_vars
+    
+def check_and_start_ollama():
+    """Check if Ollama is running, start if not."""
+    try:
+        # Check if Ollama is running
+        test_cmd = ['curl', '-s', 'http://localhost:11434/api/version']
+        result = subprocess.run(test_cmd, capture_output=True, text=True, timeout=5)
+        
+        if result.returncode == 0:
+            print("✅ Ollama is running")
+            return True
+            
+    except (subprocess.TimeoutExpired, subprocess.CalledProcessError):
+        pass
+    
+    print("🔄 Ollama not running, attempting to start...")
+    
+    try:
+        # Try to start Ollama service
+        start_cmd = ['ollama', 'serve']
+        process = subprocess.Popen(start_cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        
+        # Wait a few seconds for startup
+        import time
+        time.sleep(5)
+        
+        # Check again
+        test_cmd = ['curl', '-s', 'http://localhost:11434/api/version']
+        result = subprocess.run(test_cmd, capture_output=True, text=True, timeout=5)
+        
+        if result.returncode == 0:
+            print("✅ Ollama started successfully")
+            return True
+        else:
+            print("❌ Failed to start Ollama")
+            return False
+            
+    except Exception as e:
+        print(f"❌ Error starting Ollama: {e}")
+        return False
+    """Load environment variables from .env file"""
+    env_vars = {}
+    try:
+        with open('.env', 'r') as f:
+            for line in f:
+                line = line.strip()
+                if line and not line.startswith('#'):
+                    key, value = line.split('=', 1)
+                    env_vars[key] = value
+    except FileNotFoundError:
+        print("Error: .env file not found. Please create it with required variables.")
+        sys.exit(1)
+    return env_vars
 
 def get_commits_by_date(repo_path=None, repo_name="Repository", date=None):
     """Get all commit messages for a specific date from a Git repository."""
@@ -85,6 +138,10 @@ def get_ollama_summary(project_commits, env_vars):
     if not project_commits:
         return "No commits found for today.", {}
     
+    # Check if Ollama is running, start if needed
+    if not check_and_start_ollama():
+        return "Ollama service unavailable - summary skipped", "Manual summary needed"
+    
     # Build prompt with project sections
     prompt_sections = []
     for project_name, commits in project_commits.items():
@@ -124,7 +181,7 @@ Project Name:
             })
         ]
         
-        result1 = subprocess.run(cmd1, capture_output=True, text=True, check=True)
+        result1 = subprocess.run(cmd1, capture_output=True, text=True, check=True, timeout=30)
         response1 = json.loads(result1.stdout)
         concise_summary = response1.get('response', 'No response from Ollama')
         
@@ -139,12 +196,14 @@ Project Name:
             })
         ]
         
-        result2 = subprocess.run(cmd2, capture_output=True, text=True, check=True)
+        result2 = subprocess.run(cmd2, capture_output=True, text=True, check=True, timeout=30)
         response2 = json.loads(result2.stdout)
         bullet_points = response2.get('response', 'No bullet points generated')
         
         return concise_summary, bullet_points
         
+    except subprocess.TimeoutExpired:
+        return "Ollama response timeout - summary generation failed", "Timeout occurred"
     except Exception as e:
         return f"Error with Ollama: {e}", ""
 
